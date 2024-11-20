@@ -110,7 +110,7 @@ async function getGitHubStats(username: string) {
   return { 
     userData,
     stats: {
-      totalRepos: reposData.length,
+      totalRepos: userData.public_repos,
       totalStars,
       totalForks,
       mostActiveDay,
