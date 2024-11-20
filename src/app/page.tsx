@@ -24,6 +24,24 @@ interface GitHubUser {
   public_gists: number
 }
 
+interface GitHubAggregateStats {
+  totalRepos: number
+  totalStars: number
+  totalForks: number
+  mostActiveDay: string
+  totalCommits: number
+  serverName: string
+  topLanguages: string
+}
+
+interface GitHubStats {
+  userNames: string[] | null
+  userLogins: string[] | null
+  userData: GitHubUser
+  stats: GitHubAggregateStats
+  topLanguages: string
+}
+
 async function getGitHubStats(username: string) {
   const headers: HeadersInit = process.env.GITHUB_ACCESS_TOKEN 
     ? {
@@ -101,14 +119,10 @@ async function getGitHubStats(username: string) {
     return acc;
   }, {});
 
-  const topLanguages = Object.entries(languages)
-    .sort(([,a], [,b]) => b - a)
-    .slice(0, 3)
-    .map(([lang]) => lang)
-    .join(', ');
+  const topLanguages = Object.entries(languages);
 
   return { 
-    userData,
+    userData: userData,
     stats: {
       totalRepos: reposData.length,
       totalStars,
@@ -117,8 +131,63 @@ async function getGitHubStats(username: string) {
       totalCommits,
       serverName,
       topLanguages: topLanguages || 'NONE'
+    } as GitHubAggregateStats
+  } as GitHubStats;
+}
+
+function sumStats(statsToSum: GitHubStats[]) {
+  if (!statsToSum || statsToSum.length === 0) {
+    return null;
+  }
+
+  const result = statsToSum.reduce((acc, stat) => {
+    if (stat.userData.name) {
+      acc.userNames.push(stat.userData.name);
     }
-  };
+    acc.userLogins.push(stat.userData.login);
+    acc.userData.followers += stat.userData.followers;
+    acc.userData.following += stat.userData.following;
+    acc.stats.totalRepos += stat.stats.totalRepos;
+    acc.stats.totalStars += stat.stats.totalStars;
+    acc.stats.totalForks += stat.stats.totalForks;
+
+    for (const [lang, num] of stat.stats.topLanguages) {
+      acc.allLanguages[lang] = (acc.allLanguages[lang] ?? 0) + num;
+    }
+
+    return acc;
+  }, {
+    userNames: [],
+    userLogins: [],
+    userData: {
+      name: statsToSum[0].userData.name || statsToSum[0].userData.login,
+      login: statsToSum[0].userData.login,
+      followers: 0,
+      following: 0,
+    },
+    stats: {
+      totalRepos: 0,
+      totalStars: 0,
+      totalForks: 0,
+      mostActiveDay: statsToSum[0].stats.mostActiveDay,
+      totalCommits: statsToSum[0].stats.totalCommits,
+      serverName: statsToSum[0].stats.serverName,
+    },
+    allLanguages: {},
+    topLanguages: null,
+  } as GitHubStats);
+
+  if (result.userNames.length === 0) {
+    result.userNames.push(statsToSum[0].userData.login);
+  }
+
+  result.topLanguages = Object.entries(result.allLanguages)
+    .sort(([,a], [,b]) => b - a)
+    .slice(0, 3)
+    .map(([lang]) => lang)
+    .join(', ');
+
+  return result;
 }
 
 export default function Home() {
@@ -167,9 +236,30 @@ export default function Home() {
     setLoading(true);
     setError('');
     
+    let usernames = [username];
+    
+    const usernameDelimiter = ',';
+    
+    if (username.includes(usernameDelimiter)) {
+        usernames = username.split(usernameDelimiter);
+    }
+
     try {
-      const stats = await getGitHubStats(username);
-      setData(stats);
+      const stats = []
+      for (const un of usernames) {
+          const stat = await getGitHubStats(un.trim());
+          if (stat) {
+              stats.push(stat);
+          }
+      }
+
+      if (stats.length === 0) throw new Error("no stats");
+
+      const totalStats = sumStats(stats);
+
+      if (!totalStats) throw new Error("failed to sum stats");
+
+      setData(totalStats);
     } catch (err) {
       setError('User not found');
     } finally {
@@ -258,8 +348,8 @@ export default function Home() {
                 </div>
 
                 <div className="mb-4">
-                  <p>CUSTOMER: {data.userData.name || data.userData.login}</p>
-                  <p className="opacity-75">@{data.userData.login}</p>
+                  <p>CUSTOMER: {data.userNames.join(', ')}</p>
+                  <p className="opacity-75">@{data.userLogins.join(', @')}</p>
                 </div>
 
                 <div className="border-t border-b border-dashed py-3 mb-4">
@@ -291,7 +381,7 @@ export default function Home() {
 
                 <div className="mb-4">
                   <p>TOP LANGUAGES:</p>
-                  <p>{data.stats.topLanguages || 'NONE'}</p>
+                  <p>{data.topLanguages || 'NONE'}</p>
                 </div>
 
                 <div className="border-t border-dashed pt-3 mb-4">
